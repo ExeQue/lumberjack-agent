@@ -1,3 +1,11 @@
+<p align="center">
+<a href="https://packagist.org/packages/exeque/lumberjack-agent"><img src="https://img.shields.io/packagist/v/exeque/lumberjack-agent" alt="Latest version"></a>
+<a href="https://packagist.org/packages/exeque/lumberjack-agent"><img src="https://img.shields.io/packagist/dt/exeque/lumberjack-agent" alt="Total downloads"></a>
+<a href="https://github.com/ExeQue/lumberjack-agent/actions/workflows/tests.yml"><img src="https://github.com/ExeQue/lumberjack-agent/actions/workflows/tests.yml/badge.svg?branch=main" alt="Tests"></a>
+<img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FExeQue%2Flumberjack-agent%2Fmain%2Fcomposer.json&query=%24.require.php&label=php&color=777bb4" alt="PHP version">
+<a href="https://github.com/ExeQue/lumberjack-agent/blob/main/LICENSE"><img src="https://img.shields.io/github/license/ExeQue/lumberjack-agent" alt="License"></a>
+</p>
+
 # Lumberjack agent
 
 The local agent between your apps and [Lumberjack](https://exeque.github.io/lumberjack/). Apps
