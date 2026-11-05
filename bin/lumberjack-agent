@@ -1,0 +1,20 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+use ExeQue\LumberjackAgent\Cli;
+
+// Installed as a dependency (vendor/exeque/lumberjack-agent/bin), or run from a checkout.
+foreach ([__DIR__.'/../../../autoload.php', __DIR__.'/../vendor/autoload.php'] as $autoload) {
+    if (is_file($autoload)) {
+        require $autoload;
+        break;
+    }
+}
+
+if (function_exists('pcntl_async_signals')) {
+    pcntl_async_signals(true);
+}
+
+exit((new Cli(getenv(), static fn (string $line) => fwrite(STDERR, $line.PHP_EOL)))->run(array_slice($argv, 1)));

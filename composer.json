@@ -1,0 +1,54 @@
+{
+    "name": "exeque/lumberjack-agent",
+    "description": "The local agent that takes batches from your apps and sends them on to Lumberjack, with retry and a disk spool.",
+    "type": "library",
+    "license": "MIT",
+    "keywords": ["lumberjack", "monitoring", "error-tracking", "agent"],
+    "homepage": "https://exeque.github.io/lumberjack-agent/",
+    "authors": [
+        {
+            "name": "Morten Harders",
+            "email": "mmh@harders-it.dk"
+        }
+    ],
+    "require": {
+        "php": "^8.3",
+        "ext-json": "*",
+        "ext-zlib": "*",
+        "guzzlehttp/guzzle": "^7.8 || ^8.0"
+    },
+    "require-dev": {
+        "laravel/pint": "^1.20",
+        "pestphp/pest": "^5.0",
+        "phpstan/phpstan": "^2.0"
+    },
+    "suggest": {
+        "ext-pcntl": "Lets the agent send what it holds before it stops on SIGTERM.",
+        "ext-apcu": "Shares the client's circuit breaker between the processes of a PHP-FPM pool."
+    },
+    "autoload": {
+        "psr-4": {
+            "ExeQue\\LumberjackAgent\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Tests\\": "tests/"
+        }
+    },
+    "bin": ["bin/lumberjack-agent"],
+    "scripts": {
+        "test": "pest",
+        "analyse": "phpstan analyse --memory-limit=512M",
+        "lint": "pint",
+        "lint:test": "pint --test"
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

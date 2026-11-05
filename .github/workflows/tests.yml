@@ -1,0 +1,90 @@
+name: Tests
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+# The suite reads no secret and writes nothing back.
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+
+    name: Lint
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.5
+          coverage: none
+
+      - name: Install dependencies
+        run: composer update --prefer-stable --prefer-dist --no-interaction
+
+      - name: Check code formatting
+        run: composer lint:test
+
+      - name: Static analysis
+        run: composer analyse
+
+  tests:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # Pest 5 needs PHP 8.4; the runtime job below covers 8.3.
+        php: [ 8.4, 8.5 ]
+
+    name: PHP ${{ matrix.php }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: pcntl, zlib
+          coverage: none
+
+      - name: Install dependencies
+        run: composer update --prefer-stable --prefer-dist --no-interaction
+
+      - name: Run the tests
+        run: composer test
+
+  runtime:
+    runs-on: ubuntu-latest
+
+    name: PHP 8.3 runtime
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.3
+          extensions: zlib
+          coverage: none
+
+      - name: Install without dev dependencies
+        run: composer update --no-dev --prefer-stable --prefer-dist --no-interaction
+
+      - name: Every file parses on 8.3
+        run: for file in $(find src bin -type f); do php -l "$file" > /dev/null; done
+
+      - name: The agent starts
+        run: bin/lumberjack-agent --help
