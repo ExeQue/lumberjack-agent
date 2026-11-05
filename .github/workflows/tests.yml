@@ -80,8 +80,11 @@ jobs:
           extensions: zlib
           coverage: none
 
+      # The dev tools need PHP 8.4; what users install must resolve on 8.3 without them.
       - name: Install without dev dependencies
-        run: composer update --no-dev --prefer-stable --prefer-dist --no-interaction
+        run: |
+          jq 'del(."require-dev")' composer.json > composer.runtime.json && mv composer.runtime.json composer.json
+          composer update --no-dev --prefer-stable --prefer-dist --no-interaction
 
       - name: Every file parses on 8.3
         run: for file in $(find src bin -type f); do php -l "$file" > /dev/null; done
