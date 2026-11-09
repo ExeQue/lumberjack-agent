@@ -28,6 +28,14 @@ class AgentClient
 
     public const int RESOLVE_SECONDS = 60;
 
+    /** Spooled batches sent after one successful send, so a backlog never holds up a request. */
+    public const int REPLAY_PER_SEND = 5;
+
+    /** A batch older than this is not worth sending any more. */
+    public const int SPOOL_MAX_AGE = 3600;
+
+    public const int SPOOL_MAX_BYTES = 10 * 1024 * 1024;
+
     /** The longest line the agent takes; a larger batch is sent in parts. */
     public const int MAX_LINE = 4 * 1024 * 1024;
 
@@ -45,6 +53,9 @@ class AgentClient
         private readonly int $port,
         private readonly float $breakSeconds = self::BREAK_SECONDS,
         private readonly ?string $key = null,
+        /** Where batches wait while the agent is away, e.g. restarting in a deploy; dropped when null. */
+        private readonly ?string $spoolPath = null,
+        private readonly int $spoolMaxBytes = self::SPOOL_MAX_BYTES,
     ) {
     }
 
@@ -56,10 +67,12 @@ class AgentClient
         $now = microtime(true);
 
         if ($now < max($this->closedUntil, (float) $this->shared('closed'))) {
-            $this->dropped++;
+            $this->keepOrDrop($payload);
 
             return false;
         }
+
+        $original = $payload;
 
         if ($this->dropped > 0 && is_array($payload['events'] ?? null)) {
             $payload['events'][] = [
@@ -76,14 +89,77 @@ class AgentClient
         if (! $this->deliver($payload)) {
             $this->closedUntil = microtime(true) + $this->breakSeconds;
             $this->share('closed', $this->closedUntil, (int) ceil($this->breakSeconds));
-            $this->dropped++;
+            $this->keepOrDrop($original);
 
             return false;
         }
 
         $this->dropped = 0;
+        $this->replay();
 
         return true;
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function keepOrDrop(array $payload): void
+    {
+        if (is_array($payload['events'] ?? null) && $this->spool()?->push((string) gzencode((string) json_encode($payload, JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR | JSON_UNESCAPED_SLASHES, 64)))) {
+            return;
+        }
+
+        $this->dropped++;
+    }
+
+    /**
+     * Sends what waited for the agent, oldest first. Each process claims a file by renaming
+     * it, so two never send the same one.
+     *
+     * ponytail: a process that dies between the claim and the send leaves a .sending file
+     * behind, and that batch is lost.
+     */
+    private function replay(): void
+    {
+        $spool = $this->spool();
+
+        for ($sent = 0; $spool !== null && $sent < self::REPLAY_PER_SEND; $sent++) {
+            $file = $spool->oldest();
+
+            if ($file === null) {
+                return;
+            }
+
+            $tooOld = time() - (int) @filemtime($file) > self::SPOOL_MAX_AGE;
+            $claimed = $file.'.sending';
+            $won = ! $tooOld && @rename($file, $claimed);
+            $spool->delete($file);
+
+            if (! $won) {
+                continue;
+            }
+
+            $body = $spool->read($claimed);
+            $line = $body === null ? false : @gzdecode($body);
+            $payload = is_string($line) ? json_decode($line, true) : null;
+            $this->deadline = microtime(true) + self::WRITE_TIMEOUT;
+
+            if (is_array($payload) && ! $this->deliver($payload)) {
+                @rename($claimed, $file);
+
+                return;
+            }
+
+            @unlink($claimed);
+        }
+    }
+
+    /**
+     * Read anew each time: other processes write to it too.
+     */
+    private function spool(): ?Spool
+    {
+        return $this->spoolPath === null ? null : new Spool($this->spoolPath, $this->spoolMaxBytes, logsFailure: false);
     }
 
     /**

@@ -4,6 +4,12 @@ All notable changes are written here, newest first, in the [Keep a Changelog](ht
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-09
+
+### Added
+
+- `AgentClient` can keep batches on disk while the agent is away, for example restarting in a deploy, and sends them after its next successful send.
+
 ## [0.1.1] - 2026-11-09
 
 ### Added
@@ -15,6 +21,7 @@ All notable changes are written here, newest first, in the [Keep a Changelog](ht
 
 First public release, split out of `laravel-lumberjack`.
 
-[Unreleased]: https://github.com/ExeQue/lumberjack-agent/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/ExeQue/lumberjack-agent/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/ExeQue/lumberjack-agent/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/ExeQue/lumberjack-agent/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/ExeQue/lumberjack-agent/releases/tag/v0.1.0

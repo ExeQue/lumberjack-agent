@@ -28,13 +28,14 @@ class Spool
         private readonly string $path,
         private readonly int $maxBytes,
         private readonly ?Closure $warn = null,
+        private readonly bool $logsFailure = true,
     ) {
     }
 
     /**
      * Only the agent's user can read a batch: it holds the app's data.
      */
-    public function push(string $body): void
+    public function push(string $body): bool
     {
         if (! is_dir($this->path)) {
             @mkdir($this->path, 0700, true);
@@ -53,12 +54,14 @@ class Spool
         if ($written === false) {
             $this->failed("Could not write to the spool at {$this->path}; batches are dropped while Lumberjack cannot be reached. Make it writable by the agent's user.");
 
-            return;
+            return false;
         }
 
         $this->files[$name] = $written;
         $this->bytes += $written;
         $this->trim();
+
+        return true;
     }
 
     private function failed(string $message): void
@@ -68,7 +71,11 @@ class Spool
         }
 
         $this->warned = true;
-        @error_log('Lumberjack agent: '.$message);
+
+        if ($this->logsFailure) {
+            @error_log('Lumberjack agent: '.$message);
+        }
+
         ($this->warn)?->__invoke($message);
     }
 

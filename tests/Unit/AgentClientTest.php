@@ -87,3 +87,93 @@ describe('the agent host', function () {
             ->and(microtime(true) - $start)->toBeLessThan(0.002);
     });
 });
+
+describe('while the agent is away', function () {
+    beforeEach(function () {
+        $this->path = sys_get_temp_dir().'/lumberjack-client-spool-'.bin2hex(random_bytes(4));
+        $this->port = freePort();
+        $this->client = new AgentClient('127.0.0.1', $this->port, breakSeconds: 0.05, spoolPath: $this->path);
+        $this->payload = fn (string $message): array => ['v' => 1, 'events' => [['type' => 'log', 'message' => $message]]];
+        $this->files = fn (string $pattern = '*.json.gz'): array => glob($this->path.'/'.$pattern) ?: [];
+        $this->lines = function ($server, int $count): array {
+            $lines = [];
+
+            for ($i = 0; $i < $count; $i++) {
+                $lines[] = json_decode((string) fgets(stream_socket_accept($server, 1)), true)['events'][0]['message'];
+            }
+
+            return $lines;
+        };
+    });
+
+    afterEach(fn () => removeDirectory($this->path));
+
+    it('keeps batches, also behind the breaker, and sends them oldest first once it is back', function () {
+        $this->client->send(($this->payload)('one'));
+        $this->client->send(($this->payload)('two'));
+        expect(($this->files)())->toHaveCount(2);
+
+        $server = stream_socket_server("tcp://127.0.0.1:{$this->port}");
+        usleep(60_000);
+        expect($this->client->send(($this->payload)('now')))->toBeTrue();
+
+        expect(($this->lines)($server, 3))->toBe(['now', 'one', 'two'])
+            ->and(($this->files)())->toBe([])
+            ->and(($this->files)('*.sending'))->toBe([]);
+    });
+
+    it('does not report kept batches as dropped', function () {
+        $this->client->send(($this->payload)('one'));
+        $server = stream_socket_server("tcp://127.0.0.1:{$this->port}");
+        usleep(60_000);
+        $this->client->send(['v' => 1, 'events' => [['type' => 'query']]]);
+
+        expect(json_decode((string) fgets(stream_socket_accept($server, 1)), true)['events'])->toHaveCount(1);
+    });
+
+    it('sends the key with a kept batch, without storing it', function () {
+        $client = new AgentClient('127.0.0.1', $this->port, breakSeconds: 0.05, key: 'secret-key', spoolPath: $this->path);
+        $client->send(($this->payload)('one'));
+        expect(gzdecode((string) file_get_contents(($this->files)()[0])))->not->toContain('secret-key');
+
+        $server = stream_socket_server("tcp://127.0.0.1:{$this->port}");
+        usleep(60_000);
+        $client->send(($this->payload)('now'));
+        fgets(stream_socket_accept($server, 1));
+
+        expect(json_decode((string) fgets(stream_socket_accept($server, 1)), true)['key'])->toBe('secret-key');
+    });
+
+    it('sends only a few per send, and leaves the rest for the next', function () {
+        for ($i = 0; $i < AgentClient::REPLAY_PER_SEND + 2; $i++) {
+            usleep(60_000);
+            $this->client->send(($this->payload)("old {$i}"));
+        }
+
+        $server = stream_socket_server("tcp://127.0.0.1:{$this->port}");
+        usleep(60_000);
+        $this->client->send(($this->payload)('now'));
+        ($this->lines)($server, AgentClient::REPLAY_PER_SEND + 1);
+
+        expect(($this->files)())->toHaveCount(2);
+    });
+
+    it('throws away a batch that has waited too long', function () {
+        $this->client->send(($this->payload)('stale'));
+        touch(($this->files)()[0], time() - AgentClient::SPOOL_MAX_AGE - 1);
+
+        $server = stream_socket_server("tcp://127.0.0.1:{$this->port}");
+        usleep(60_000);
+        $this->client->send(($this->payload)('now'));
+
+        expect(($this->lines)($server, 1))->toBe(['now'])
+            ->and(@stream_socket_accept($server, 0.05))->toBeFalse()
+            ->and(($this->files)())->toBe([]);
+    });
+
+    it('never keeps a control message', function () {
+        $this->client->send(['control' => 'terminate']);
+
+        expect(($this->files)())->toBe([]);
+    });
+});
