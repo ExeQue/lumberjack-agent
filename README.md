@@ -87,6 +87,8 @@ From any other language, open a TCP connection to the agent and write one JSON o
 - `{"key": "...", "control": "terminate"}` asks the agent to send what it holds and exit, e.g.
   after a deploy.
 
+The heartbeat tells the agent which event types the server knows. An event of a type it does not know is dropped, and once an hour per type the agent reports an `UnsupportedFeature` exception, so the project gets an issue saying to update the server.
+
 A line may be 4 MB at most; split a larger batch.
 
 ## Develop

@@ -33,6 +33,11 @@ class Agent
      */
     public const float SEND_BUDGET = 0.25;
 
+    /** What a server from before the heartbeat listed its features understands. */
+    public const array BASELINE_FEATURES = ['request', 'query', 'exception', 'job', 'log', 'schedule', 'command', 'span', 'health', 'request_counts'];
+
+    public const int UNSUPPORTED_REPORT_SECONDS = 3600;
+
     private float $budgetEnds = 0.0;
 
     /** @var array<string, array{envelope: array<string, mixed>, events: list<mixed>}> */
@@ -49,6 +54,12 @@ class Agent
     private int $failures = 0;
 
     private bool $stopRequested = false;
+
+    /** @var list<string>|null The event types the server knows; null until it has answered a heartbeat. */
+    private ?array $features = null;
+
+    /** @var array<string, float> When each unsupported type was last reported. */
+    private array $unsupportedReportedAt = [];
 
     /** @var array<string, true> Projects already warned about. */
     private array $foreign = [];
@@ -117,10 +128,11 @@ class Agent
         ];
         $key = md5(serialize($envelope));
 
-        // Request counts go in batches of their own: a server from before them refuses a
+        // Types an older server may not know go in batches of their own: it refuses a whole
         // batch holding one, and that must not cost the rest of the data.
         foreach ($payload['events'] as $event) {
-            $batch = is_array($event) && ($event['type'] ?? null) === 'request_counts' ? $key.':counts' : $key;
+            $type = is_array($event) ? ($event['type'] ?? null) : null;
+            $batch = $type === 'request_counts' || $type === 'alert' ? $key.':'.$type : $key;
             $this->batches[$batch] ??= ['envelope' => $envelope, 'events' => []];
             $this->batches[$batch]['events'][] = $event;
         }
@@ -153,6 +165,11 @@ class Agent
         if ($now - $this->lastHeartbeat >= self::HEARTBEAT_SECONDS) {
             $this->lastHeartbeat = $now;
             $answer = $this->sender->heartbeat($this->host ?? (gethostname() ?: 'unknown'), $this->client ?? AgentInfo::describe(), $this->name, $this->status());
+
+            if ($answer !== null) {
+                $this->features = is_array($answer['features'] ?? null) ? array_values($answer['features']) : self::BASELINE_FEATURES;
+            }
+
             $this->storeHealth($answer['health'] ?? null);
         }
     }
@@ -199,7 +216,7 @@ class Agent
         $this->bytes = 0;
 
         foreach ($batches as $batch) {
-            foreach (array_chunk($batch['events'], self::EVENTS_PER_BATCH) as $events) {
+            foreach (array_chunk($this->supported($batch['events'], $now), self::EVENTS_PER_BATCH) as $events) {
                 $body = gzencode((string) json_encode([...$batch['envelope'], 'events' => $events], JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR | JSON_UNESCAPED_SLASHES));
 
                 if ($body !== false) {
@@ -207,6 +224,45 @@ class Agent
                 }
             }
         }
+    }
+
+    /**
+     * The events the server can take. What it cannot is dropped, and reported as an
+     * exception so the project gets an issue saying to update the server.
+     *
+     * @param  list<mixed>  $events
+     * @return list<mixed>
+     */
+    private function supported(array $events, float $now): array
+    {
+        if ($this->features === null) {
+            return $events;
+        }
+
+        $kept = [];
+
+        foreach ($events as $event) {
+            $type = is_array($event) ? ($event['type'] ?? null) : null;
+
+            if (! is_string($type) || in_array($type, $this->features, true)) {
+                $kept[] = $event;
+
+                continue;
+            }
+
+            if ($now - ($this->unsupportedReportedAt[$type] ?? 0.0) >= self::UNSUPPORTED_REPORT_SECONDS) {
+                $this->unsupportedReportedAt[$type] = $now;
+                $kept[] = [
+                    'type' => 'exception',
+                    'class' => 'UnsupportedFeature',
+                    'message' => "This Lumberjack server does not support \"{$type}\". Update the server.",
+                    'fingerprint' => 'lumberjack-agent:unsupported-feature:'.$type,
+                    'timestamp' => $now,
+                ];
+            }
+        }
+
+        return $kept;
     }
 
     public function stopRequested(): bool

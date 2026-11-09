@@ -228,3 +228,53 @@ describe('the agent key', function () {
             ->and(ProjectFingerprint::agentKey(null))->toBeNull();
     });
 });
+
+describe('what the server supports', function () {
+    beforeEach(function () {
+        $this->serverKnows = function (?array $features): void {
+            $this->lumberjack = new FakeLumberjack(fn (RequestInterface $request) => str_ends_with($request->getUri()->getPath(), '/heartbeat')
+                ? new Response(200, [], (string) json_encode($features === null ? ['ok' => true] : ['features' => $features]))
+                : FakeLumberjack::accept($request));
+        };
+        $this->events = fn (): array => array_merge(...array_column($this->lumberjack->batches(), 'events'));
+    });
+
+    it('passes an alert on when the server knows it, in a batch of its own', function () {
+        ($this->serverKnows)(['log', 'alert']);
+        $agent = ($this->makeAgent)();
+        $agent->tick(microtime(true));
+
+        $agent->receive(($this->line)([['type' => 'log', 'message' => 'hi'], ['type' => 'alert', 'title' => 'Paid']]));
+        $agent->flush(microtime(true));
+
+        expect($this->lumberjack->batches())->toHaveCount(2)
+            ->and(array_column(($this->events)(), 'type'))->toBe(['log', 'alert']);
+    });
+
+    it('turns what an old server cannot take into one issue an hour, and keeps the rest', function () {
+        ($this->serverKnows)(null);
+        $agent = ($this->makeAgent)();
+        $now = microtime(true);
+        $agent->tick($now);
+
+        foreach ([$now, $now + 60, $now + Agent::UNSUPPORTED_REPORT_SECONDS] as $at) {
+            $agent->receive(($this->line)([['type' => 'log', 'message' => 'hi'], ['type' => 'alert', 'title' => 'Paid']]));
+            $agent->flush($at);
+        }
+
+        $events = ($this->events)();
+        $types = array_count_values(array_column($events, 'type'));
+        $reports = array_values(array_filter($events, fn (array $event): bool => ($event['class'] ?? null) === 'UnsupportedFeature'));
+
+        expect($types)->toBe(['log' => 3, 'exception' => 2])
+            ->and($reports[0]['message'])->toContain('"alert"');
+    });
+
+    it('sends everything until the server has answered', function () {
+        $agent = ($this->makeAgent)();
+        $agent->receive(($this->line)([['type' => 'alert', 'title' => 'Paid']]));
+        $agent->flush(microtime(true));
+
+        expect(array_column(($this->events)(), 'type'))->toBe(['alert']);
+    });
+});
